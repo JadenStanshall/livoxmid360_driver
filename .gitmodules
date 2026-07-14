@@ -1,0 +1,9 @@
+[submodule "src/livox_ros_driver2"]
+	path = src/livox_ros_driver2
+	url = https://github.com/Livox-SDK/livox_ros_driver2.git
+[submodule "src/livox_to_pointcloud2"]
+	path = src/livox_to_pointcloud2
+	url = https://github.com/koide3/livox_to_pointcloud2.git
+[submodule "deps/livox_sdk2"]
+	path = deps/livox_sdk2
+	url = https://github.com/Livox-SDK/Livox-SDK2.git

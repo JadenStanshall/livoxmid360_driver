@@ -1,0 +1,297 @@
+diff --git a/samples/livox_lidar_quick_start/mid360_config.json b/samples/livox_lidar_quick_start/mid360_config.json
+index 128ec5e..04d151a 100644
+--- a/samples/livox_lidar_quick_start/mid360_config.json
++++ b/samples/livox_lidar_quick_start/mid360_config.json
+@@ -9,8 +9,9 @@
+     },
+     "host_net_info" : [
+       {
+-        "host_ip"        : "192.168.1.5",
+-        "multicast_ip"   : "224.1.1.5",
++        "host_ip"        : "192.168.1.50",
++        "multicast_ip"   : "",
++        "lidar_ip"       : ["192.168.1.3"],
+         "cmd_data_port"  : 56101,
+         "push_msg_port"  : 56201,
+         "point_data_port": 56301,
+diff --git a/sdk_core/base/logging.cpp b/sdk_core/base/logging.cpp
+index 4fdd7b0..ace9d9c 100644
+--- a/sdk_core/base/logging.cpp
++++ b/sdk_core/base/logging.cpp
+@@ -24,36 +24,14 @@
+ 
+ #include "logging.h"
+ 
+-std::shared_ptr<spdlog::logger> logger = NULL;
++// These variables are kept for ABI compatibility with DisableLivoxSdkConsoleLogger()
+ bool is_save_log_file = false;
+ bool is_console_log_enable = true;
+ 
+ void InitLogger() {
+-
+-  if (spdlog::get("console") != nullptr) {
+-    logger = spdlog::get("console");
+-    return;
+-  }
+-
+-  std::vector<spdlog::sink_ptr> sinkList;
+-  if (is_console_log_enable) {
+-    auto consoleSink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+-    consoleSink->set_level(spdlog::level::debug);
+-    sinkList.push_back(consoleSink);
+-  }
+-
+-  if (is_save_log_file) {
+-    auto rotateSink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>("livox_log.txt", 1024 * 1024 * 5, 2);
+-    rotateSink->set_level(spdlog::level::debug);
+-    sinkList.push_back(rotateSink);
+-  }
+-
+-  logger = std::make_shared<spdlog::logger>("console", begin(sinkList), end(sinkList));
+-  spdlog::register_logger(logger);
+-  logger->set_level(spdlog::level::debug);
+-  logger->flush_on(spdlog::level::debug);
++  // No-op: spdlog removed to avoid fmt version conflicts with system spdlog
+ }
+ 
+ void UninitLogger() {
+-  spdlog::drop_all();
+-}
+\ No newline at end of file
++  // No-op
++}
+diff --git a/sdk_core/base/logging.h b/sdk_core/base/logging.h
+index 40c30e7..f13abc0 100644
+--- a/sdk_core/base/logging.h
++++ b/sdk_core/base/logging.h
+@@ -24,43 +24,21 @@
+ 
+ #ifndef LIVOX_LOGGING_H_
+ #define LIVOX_LOGGING_H_
+-#include "spdlog/spdlog.h"
+-#include "spdlog/sinks/stdout_color_sinks.h"
+-#include "spdlog/sinks/rotating_file_sink.h"
+ 
+-#ifdef _WIN32
+-#define __FILENAME__ (strrchr(__FILE__, '\\') ? (strrchr(__FILE__, '\\') + 1):__FILE__)
+-#else
+-#define __FILENAME__ (strrchr(__FILE__, '/') ? (strrchr(__FILE__, '/') + 1):__FILE__)
+-#endif
++// Removed spdlog dependency to avoid fmt version conflicts with system spdlog.
++// The LOG macros are no-ops; SDK diagnostics are not needed for correct operation.
+ 
+-#ifndef suffix
+-#define suffix(msg)  std::string(msg).append("  [")\
+-        .append(__FILENAME__).append("] [").append(__func__)\
+-        .append("] [").append(std::to_string(__LINE__))\
+-        .append("]").c_str()
+-#endif
+-
+-#ifndef SPDLOG_TRACE_ON
+-#define SPDLOG_TRACE_ON
+-#endif
+-
+-#ifndef SPDLOG_DEBUG_ON
+-#define SPDLOG_DEBUG_ON
+-#endif
+-
+-extern std::shared_ptr<spdlog::logger> logger;
+ extern bool is_save_log_file;
+ extern bool is_console_log_enable;
+ 
+ void InitLogger();
+ void UninitLogger();
+ 
+-#define LOG_TRACE(msg, ...) logger->trace(suffix(msg), ##__VA_ARGS__)
+-#define LOG_DEBUG(msg, ...) logger->debug(suffix(msg), ##__VA_ARGS__)
+-#define LOG_INFO(msg, ...) logger->info(suffix(msg), ##__VA_ARGS__)
+-#define LOG_WARN(msg, ...) logger->warn(suffix(msg), ##__VA_ARGS__)
+-#define LOG_ERROR(msg, ...) logger->error(suffix(msg), ##__VA_ARGS__)
+-#define LOG_FATAL(msg, ...) logger->critical(suffix(msg), ##__VA_ARGS__)
++#define LOG_TRACE(msg, ...)
++#define LOG_DEBUG(msg, ...)
++#define LOG_INFO(msg, ...)
++#define LOG_WARN(msg, ...)
++#define LOG_ERROR(msg, ...)
++#define LOG_FATAL(msg, ...)
+ 
+ #endif  // LIVOX_LOGGING_H_
+diff --git a/sdk_core/command_handler/general_command_handler.cpp b/sdk_core/command_handler/general_command_handler.cpp
+index 1a69ea9..6a6ac15 100644
+--- a/sdk_core/command_handler/general_command_handler.cpp
++++ b/sdk_core/command_handler/general_command_handler.cpp
+@@ -472,11 +472,18 @@ void GeneralCommandHandler::UpdateFwType(const uint32_t handle, const uint8_t fw
+     } else {
+       device_info.is_loader_mode.store(true);
+     }
++    // For custom lidars in normal fw mode, immediately push config without waiting
++    // for another detection round — needed when lidar's stored host IP is stale.
++    if (!device_info.is_loader_mode.load() && !device_info.is_update_cfg.load()) {
++      if (custom_lidars_cfg_map_.find(handle) != custom_lidars_cfg_map_.end()) {
++        UpdateLidarCfg(device_info.dev_type, handle,
++                       custom_lidars_cfg_map_[handle].lidar_net_info.cmd_data_port);
++      }
++    }
+   }
+ }
+ 
+ livox_status GeneralCommandHandler::QueryFwType(const uint32_t handle) {
+-
+   uint8_t req_buff[kMaxCommandBufferSize] = {0};
+   uint16_t req_len = 0;
+ 
+diff --git a/sdk_core/command_handler/general_command_handler.h b/sdk_core/command_handler/general_command_handler.h
+index 198cf5b..22e7829 100644
+--- a/sdk_core/command_handler/general_command_handler.h
++++ b/sdk_core/command_handler/general_command_handler.h
+@@ -118,11 +118,11 @@ class GeneralCommandHandler : public noncopyable {
+   const LivoxLidarCfg& GetLidarCfg(const uint32_t handle);
+   livox_status LivoxLidarRequestReset(uint32_t handle, LivoxLidarResetCallback cb, void* client_data);
+   static void QueryFwTypeCallback(livox_status status, uint32_t handle, LivoxLidarDiagInternalInfoResponse* response, void* client_data);
++  void HandleDetectionData(uint32_t handle, uint16_t lidar_port, const CommPacket& packet);
+  private:
+   bool VerifyNetSegment(const DetectionData* detection_data);
+   std::shared_ptr<CommandHandler> GetLidarCommandHandler(const uint8_t dev_type);
+   std::shared_ptr<CommandHandler> GetLidarCommandHandler(const uint32_t handle);
+-  void HandleDetectionData(uint32_t handle, uint16_t lidar_port, const CommPacket& packet);
+   void GetFirmwareType(const uint32_t handle, DeviceInfo& device_info);
+   livox_status QueryFwType(const uint32_t handle);
+   void UpdateFwType(const uint32_t handle, const uint8_t fw_type);
+diff --git a/sdk_core/device_manager.cpp b/sdk_core/device_manager.cpp
+index 7e40a44..c7271c3 100644
+--- a/sdk_core/device_manager.cpp
++++ b/sdk_core/device_manager.cpp
+@@ -170,6 +170,36 @@ bool DeviceManager::Init(std::shared_ptr<std::vector<LivoxLidarCfg>>& lidars_cfg
+     return false;
+   }
+ 
++  // Synthesize startup fake detection for each custom-configured lidar so the
++  // SDK immediately runs GetFirmwareType → UpdateLidarCfg → SetCustomLidar
++  // without waiting for the lidar to send a discovery packet. This is necessary
++  // when the lidar's stored host IP is stale (e.g. changed by Livox Viewer).
++  for (auto it = custom_lidars_cfg_ptr_->begin(); it != custom_lidars_cfg_ptr_->end(); ++it) {
++    const LivoxLidarCfg& lidar_cfg = *it;
++    uint32_t handle = inet_addr(lidar_cfg.lidar_net_info.lidar_ipaddr.c_str());
++    if (fake_detected_handles_.count(handle) == 0) {
++      fake_detected_handles_.insert(handle);
++      DetectionData fake_det;
++      memset(&fake_det, 0, sizeof(fake_det));
++      fake_det.ret_code = 0;
++      fake_det.dev_type = lidar_cfg.device_type;
++      strncpy(fake_det.sn, "STARTUP", sizeof(fake_det.sn) - 1);
++      uint8_t* ip_bytes = reinterpret_cast<uint8_t*>(&handle);
++      fake_det.lidar_ip[0] = ip_bytes[0];
++      fake_det.lidar_ip[1] = ip_bytes[1];
++      fake_det.lidar_ip[2] = ip_bytes[2];
++      fake_det.lidar_ip[3] = ip_bytes[3];
++      fake_det.cmd_port = lidar_cfg.lidar_net_info.cmd_data_port;
++      CommPacket fake_packet;
++      memset(&fake_packet, 0, sizeof(fake_packet));
++      fake_packet.data = reinterpret_cast<uint8_t*>(&fake_det);
++      fake_packet.data_len = sizeof(fake_det);
++      struct in_addr tmp; tmp.s_addr = handle;
++      printf("[Livox] Synthesizing startup detection for %s\n", inet_ntoa(tmp));
++      GeneralCommandHandler::GetInstance().HandleDetectionData(handle, kDetectionPort, fake_packet);
++    }
++  }
++
+   if (!(lidars_cfg_ptr_->empty()) || !(custom_lidars_cfg_ptr->empty())) {
+     detection_thread_ = std::make_shared<std::thread>(&DeviceManager::DetectionLidars, this);
+     is_stop_detection_.store(false);
+@@ -261,7 +291,9 @@ bool DeviceManager::CreateChannel() {
+ bool DeviceManager::CreateDetectionChannel() {
+ #ifdef WIN32
+ #else
+-  detection_broadcast_socket_ = util::CreateSocket(kDetectionPort, true, true, true, "255.255.255.255", "");
++  // Bind to INADDR_ANY so the broadcast-capable socket can actually bind successfully.
++  // Binding to "255.255.255.255" fails on Linux (EADDRNOTAVAIL).
++  detection_broadcast_socket_ = util::CreateSocket(kDetectionPort, true, true, true, "", "");
+   if (detection_broadcast_socket_ < 0) {
+     LOG_ERROR("Create detection broadcast socket failed.");
+     return false;
+@@ -446,6 +478,17 @@ void DeviceManager::Detection() {
+   if (byte_send < 0) {
+     LOG_INFO("Detection lidars failed, Send to lidar failed.");
+   }
++
++  // Also send unicast detection to each known custom lidar.
++  // This ensures detection works even when broadcast UDP is blocked (e.g. WSL2).
++  for (auto& it : custom_lidars_cfg_map_) {
++    struct sockaddr_in unicast_addr;
++    unicast_addr.sin_family = AF_INET;
++    unicast_addr.sin_addr.s_addr = it.first;
++    unicast_addr.sin_port = htons(kDetectionPort);
++    sendto(detection_socket_, (const char*)buf.data(), size, 0,
++           (const struct sockaddr *) &unicast_addr, sizeof(unicast_addr));
++  }
+ }
+ 
+ void DeviceManager::OnData(socket_t sock, void *client_data) {
+@@ -506,6 +549,33 @@ void DeviceManager::OnData(socket_t sock, void *client_data) {
+     const LivoxLidarCfg& lidar_cfg = custom_lidars_cfg_map_[handle];
+     if (port == lidar_cfg.lidar_net_info.imu_data_port || port == lidar_cfg.lidar_net_info.point_data_port) {
+       DataHandler::GetInstance().Handle(lidar_cfg.device_type, handle, (uint8_t*)(buf.get()), size);
++
++      // If this lidar has never sent a detection response (e.g. already streaming in WSL2),
++      // synthesize the detection so the init chain fires and connect_state gets set.
++      if (fake_detected_handles_.count(handle) == 0) {
++        fake_detected_handles_.insert(handle);
++          printf("[Livox] Synthesizing detection for %s (dev_type=%u)\n",
++            lidar_ip.c_str(), lidar_cfg.device_type);
++
++        DetectionData fake_det;
++        memset(&fake_det, 0, sizeof(fake_det));
++        fake_det.ret_code = 0;
++        fake_det.dev_type = lidar_cfg.device_type;
++        strncpy(fake_det.sn, "SYNTH", sizeof(fake_det.sn) - 1);
++        uint8_t* ip_bytes = reinterpret_cast<uint8_t*>(&handle);
++        fake_det.lidar_ip[0] = ip_bytes[0];
++        fake_det.lidar_ip[1] = ip_bytes[1];
++        fake_det.lidar_ip[2] = ip_bytes[2];
++        fake_det.lidar_ip[3] = ip_bytes[3];
++        fake_det.cmd_port = lidar_cfg.lidar_net_info.cmd_data_port;
++
++        CommPacket fake_packet;
++        memset(&fake_packet, 0, sizeof(fake_packet));
++        fake_packet.data = reinterpret_cast<uint8_t*>(&fake_det);
++        fake_packet.data_len = sizeof(fake_det);
++
++        GeneralCommandHandler::GetInstance().HandleDetectionData(handle, kDetectionPort, fake_packet);
++      }
+       return;
+     }
+     if (port == kDetectionPort || port == lidar_cfg.lidar_net_info.cmd_data_port || port == lidar_cfg.lidar_net_info.push_msg_port ||
+@@ -516,7 +586,6 @@ void DeviceManager::OnData(socket_t sock, void *client_data) {
+     return;
+   }
+ 
+-  // parse the device type info from config_ptr and add to custom_lidars_cfg_map_
+   if (port != kDetectionPort) {
+     return;
+   }
+diff --git a/sdk_core/device_manager.h b/sdk_core/device_manager.h
+index 673c18f..43d1e7d 100644
+--- a/sdk_core/device_manager.h
++++ b/sdk_core/device_manager.h
+@@ -185,6 +185,9 @@ class DeviceManager : public IOLoop::IOLoopDelegate {
+   std::atomic<bool> is_stop_detection_{false};
+   std::shared_ptr<std::thread> detection_thread_;
+ 
++  // Tracks handles for which detection was synthesized (no real detection response received)
++  std::set<uint32_t> fake_detected_handles_;
++
+   std::mutex lidars_dev_type_mutex_;
+   std::map<uint32_t, uint16_t> lidars_dev_type_;
+ 
+diff --git a/sdk_core/logger_handler/file_manager.cpp b/sdk_core/logger_handler/file_manager.cpp
+index 4a54133..f65d64a 100644
+--- a/sdk_core/logger_handler/file_manager.cpp
++++ b/sdk_core/logger_handler/file_manager.cpp
+@@ -23,6 +23,7 @@
+ //
+ 
+ #include "file_manager.h"
++#include <cstring>
+ 
+ #ifdef WIN32
+   #include <direct.h>

@@ -1,0 +1,13 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 40802cd..5fffa65 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -34,7 +34,7 @@ if($ENV{ROS_VERSION} EQUAL 1)
+   add_dependencies(livox_to_pointcloud2_node
+     ${catkin_EXPORTED_TARGETS}
+   )
+-elseif($ENV{ROS_VERSION} EQUAL 2)
++elseif($ENV{ROS_VERSION} EQUAL 2 OR "$ENV{ROS_VERSION}" STREQUAL "ROS2")
+   ##########################
+   ## ament-related (ROS2) ##
+   ##########################
