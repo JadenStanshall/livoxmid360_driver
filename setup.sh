@@ -25,7 +25,7 @@ apply_patch "$SCRIPT_DIR/deps/livox_sdk2" "$SCRIPT_DIR/patches/livox_sdk2/wsl2-f
 echo "==> Building and installing Livox-SDK2 (requires sudo)..."
 mkdir -p "$SCRIPT_DIR/deps/livox_sdk2/build"
 cd "$SCRIPT_DIR/deps/livox_sdk2/build"
-cmake .. -DCMAKE_BUILD_TYPE=Release
+cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 make -j"$(nproc)"
 sudo make install
 sudo ldconfig
@@ -35,6 +35,10 @@ cd "$SCRIPT_DIR"
 echo "==> Applying patches to livox_ros_driver2..."
 apply_patch "$SCRIPT_DIR/src/livox_ros_driver2" "$SCRIPT_DIR/patches/livox_ros_driver2/wsl2-fixes.patch"
 
+if [ ! -f "$SCRIPT_DIR/src/livox_ros_driver2/package.xml" ]; then
+  ln -s package_ROS2.xml "$SCRIPT_DIR/src/livox_ros_driver2/package.xml"
+fi
+
 # ── livox_to_pointcloud2 ─────────────────────────────────────────────────────
 echo "==> Applying patches to livox_to_pointcloud2..."
 apply_patch "$SCRIPT_DIR/src/livox_to_pointcloud2" "$SCRIPT_DIR/patches/livox_to_pointcloud2/cmake-fix.patch"
@@ -42,10 +46,12 @@ apply_patch "$SCRIPT_DIR/src/livox_to_pointcloud2" "$SCRIPT_DIR/patches/livox_to
 # ── ROS2 workspace build ─────────────────────────────────────────────────────
 echo "==> Sourcing ROS2 Humble..."
 # shellcheck disable=SC1091
+set +u
 source /opt/ros/humble/setup.bash
+set -u
 
 echo "==> Building ROS2 workspace..."
-colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
+colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DHUMBLE_ROS=humble
 
 echo ""
 echo "Setup complete."
